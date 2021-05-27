@@ -26,12 +26,9 @@
   "author": {
     "name": "Chris Light"
   },
-  "dependencies": {
-    "earcut": "2.1.5"
-  },
   "devDependencies": {
     "browserify": "16.5.0",
-    "jest": "^24.9.0",
+    "jest": "27.0.1",
     "uglify-js": "3.6.0"
   },
   "license": "MIT"

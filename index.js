@@ -12,7 +12,6 @@ var SegmentSelector = require('./lib/segment-selector');
 var GeoJSON = require('./lib/geojson');
 var Convex = require('./lib/convex');
 var Simplify = require('./lib/simplify');
-var earcut = require('earcut');
 
 var buildLog = false;
 var epsilon = Epsilon();
@@ -121,15 +120,11 @@ PolyBool = {
 	makeConvex: function(poly) {
 		var regions = [];
 		poly.regions.forEach(function (polyRegion) {
-			var transformed = [];
-			polyRegion.forEach(function (point) {
-				transformed.push(point[0]);
-				transformed.push(point[1]);
-			});
-			var indices = earcut(transformed);
-			for (var i = 0; i < indices.length; i += 3)
-				regions.push([polyRegion[indices[i]], polyRegion[indices[i+1]], polyRegion[indices[i+2]]]);
+			regions = regions.concat(Convex.makeConvex(polyRegion));
 		});
+		if (regions.some(function(r) { return !Convex.isConvex(r); })) {
+			console.log('Non-convex shape created:\nInput:\n' + JSON.stringify(poly) + '\n\nOutput:\n' + JSON.stringify(regions));
+		}
 		return {
 			regions: regions,
 			inverted: false
