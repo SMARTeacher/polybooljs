@@ -13,6 +13,7 @@ var SegmentSelector = require('./lib/segment-selector');
 var GeoJSON = require('./lib/geojson');
 var Convex = require('./lib/convex');
 var Simplify = require('./lib/simplify');
+var Debug = require('./lib/debug');
 
 var buildLog = false;
 var epsilon = Epsilon();
@@ -125,6 +126,7 @@ PolyBool = {
 		});
 		if (regions.some(function(r) { return !Convex.isConvex(r); })) {
 			console.log('Non-convex shape created:\nInput:\n' + JSON.stringify(poly) + '\n\nOutput:\n' + JSON.stringify(regions));
+			console.log('Paths: ' + Debug.getRegionCollectionLog(3, [poly.regions, regions]));
 		}
 		return {
 			regions: regions,
@@ -193,7 +195,7 @@ if (typeof window === 'object')
 
 module.exports = PolyBool;
 
-},{"./lib/build-log":2,"./lib/convex":3,"./lib/epsilon":4,"./lib/geojson":5,"./lib/intersecter":6,"./lib/segment-chainer":8,"./lib/segment-selector":9,"./lib/simplify":10}],2:[function(require,module,exports){
+},{"./lib/build-log":2,"./lib/convex":3,"./lib/debug":4,"./lib/epsilon":5,"./lib/geojson":6,"./lib/intersecter":7,"./lib/segment-chainer":9,"./lib/segment-selector":10,"./lib/simplify":11}],2:[function(require,module,exports){
 // (c) Copyright 2016, Sean Connelly (@voidqk), http://syntheti.cc
 // MIT License
 // Project Home: https://github.com/voidqk/polybooljs
@@ -482,30 +484,56 @@ var Convex = {
 
         var points = extractPointData(poly, orientation);
         var concavePoint = -1;
+        var largestValidSplit = undefined;
         for (var i = 0; i < points.length; ++i) {
             var iPoint = points[i];
             if (!iPoint.isConvex) {
                 concavePoint = i;
-                for (var j = i + 2; j < points.length; ++j) {
-                    var jPoint = points[j];
-                    if (!jPoint.isConvex) {
-                        if (i === 0 && j === points.length - 1) {
-                            var split = splitPoly(poly, 0, poly.length >> 1);
-                            return [split[0]].concat(this.makeConvex(split[1]));
-                        } else {
-                            if (!Util.segmentIntersectsPoly([[iPoint.x, iPoint.y], [jPoint.x, jPoint.y]], poly)) {
-                                var split = splitPoly(poly, i, j);
-                                return this.makeConvex(split[0]).concat(this.makeConvex(split[1]));
-                            }
+                for (var j = 1; j < points.length - 1; ++j) {
+                    var jIndex = Util.normalizeIndex(poly, i + j);
+                    var jPoint = points[jIndex];
+                    if (j === 1) {
+                        if (!jPoint.isConvex) {
+                            break;
                         }
+                        continue;
                     }
+                    if (Util.segmentIntersectsPoly([poly[jIndex], poly[i]], poly)) {
+                        break;
+                    }
+                    split = splitPoly(poly, i, jIndex);
+                    if (this.isConvex(split[0])) {
+                        if (Util.isPointOnSegment(split[1][split[1].length - 1], [split[1][0], split[1][1]])) {
+                            split[1][0] = split[1].pop();
+                        }
+                        largestValidSplit = split;
+                    } else {
+                        break;
+                    }
+                }
+                if (largestValidSplit) {
+                    return [largestValidSplit[0]].concat(this.makeConvex(largestValidSplit[1]));
                 }
             }
         }
 
         if (concavePoint >= 0) {
-            var split = splitPoly(poly, concavePoint, Util.normalizeIndex(poly, concavePoint + (poly.length >> 1)));
-            return this.makeConvex(split[0]).concat(this.makeConvex(split[1]));
+            for (var i = 0; i < points.length; ++i) {
+                var iIndex = Util.normalizeIndex(poly, concavePoint + i)
+                var iPoint = points[iIndex];
+
+                if (!iPoint.isConvex) {
+                    for (var j = 2; j < points.length - 1; ++j) {
+                        var jIndex = Util.normalizeIndex(poly, iIndex + j);
+                        var jPoint = points[jIndex];
+
+                        if (!Util.segmentIntersectsPoly([poly[jIndex], poly[iIndex]], poly)) {
+                            var split = splitPoly(poly, iIndex, jIndex);
+                            return this.makeConvex(split[0]).concat(this.makeConvex(split[1]));
+                        }
+                    }
+                }
+            }
         }
 
         return [poly];
@@ -514,7 +542,79 @@ var Convex = {
 
 module.exports = Convex;
 
-},{"./util":11}],4:[function(require,module,exports){
+},{"./util":12}],4:[function(require,module,exports){
+(function (global){
+var Convex = require("./convex");
+
+var Debug = {
+    regionsToFormat: function (regions, location, format) {
+        var offset = [0,0];
+        if (location) {
+            var min = regions.reduce(
+                function (min, r) {
+                    var regionMin = r.reduce(function (min, p) { return [Math.min(min[0], p[0]), Math.min(min[1], p[1])]; }, [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]);
+                    return [Math.min(min[0], regionMin[0]), Math.min(min[1], regionMin[1])];
+                },
+                [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]
+            );
+            offset = [location[0] - min[0], location[1] - min[1]];
+        }
+        var conversionFunction = this['regionToFormat' + format] ? this['regionToFormat' + format] : regionToFormat1;
+        return regions.map(function(r) { return conversionFunction(r, offset); }).join('');
+    },
+
+    regionToFormat1: function (region, offset) {
+        var color = Convex.isConvex(region) ? 'grey' : 'red';
+        var result = '{"loc":"0 0","fill":"' + color + '","stroke":"black","strokeWidth":1,"category":"PolygonDrawing","geo":"F';
+        result += ' M' + region.map(function(p) { return (p[0] + offset[0]) + ' ' + (p[1] + offset[1]); }).join(' L');
+        result += 'z"},\n';
+        return result;
+    },
+
+    regionToFormat2: function (region, offset) {
+        var color = Convex.isConvex(region) ? '#aaa' : '#f00';
+        var result = '<path stroke="#000" fill="' + color + '" d="';
+        result += 'M ' + region.map(function(p) { return (p[0] + offset[0]) + ',' + (p[1] + offset[1]); }).join(' L');
+        result += 'z" />\n';
+        return result;
+    },
+
+    regionToFormat3: function (region, offset) {
+        return ' M ' + region.map(function(p) { return (p[0] + offset[0]) + ' ' + (p[1] + offset[1]); }).join(' L ') + ' Z';
+    },
+
+    getRegionCollectionLog: function (format, regionsCollection) {
+        var result = '';
+
+        var offset = [0, 0];
+        for (var i = 0; i < regionsCollection.length; ++i) {
+            var polys = regionsCollection[i];
+            result += this.regionsToFormat(polys, offset, format);
+
+            var minMax = [Number.MAX_SAFE_INTEGER, Number.MIN_SAFE_INTEGER];
+            for (var j = 0; j < polys.length; ++j) {
+                var poly = polys[j];
+
+                for (var k = 0; k < poly.length; ++k) {
+                    var point = poly[k];
+
+                    minMax[0] = Math.min(minMax[0], point[0]);
+                    minMax[1] = Math.max(minMax[1], point[0]);
+                }
+            }
+
+            offset[0] += (minMax[1] - minMax[0]) * 1.25;
+        }
+
+        return result;
+    }
+};
+
+module.exports = Debug;
+global['polyBoolDebug'] = Debug;
+
+}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"./convex":3}],5:[function(require,module,exports){
 // (c) Copyright 2016, Sean Connelly (@voidqk), http://syntheti.cc
 // MIT License
 // Project Home: https://github.com/voidqk/polybooljs
@@ -686,7 +786,7 @@ function Epsilon(eps){
 
 module.exports = Epsilon;
 
-},{}],5:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 // (c) Copyright 2017, Sean Connelly (@voidqk), http://syntheti.cc
 // MIT License
 // Project Home: https://github.com/voidqk/polybooljs
@@ -876,7 +976,7 @@ var GeoJSON = {
 
 module.exports = GeoJSON;
 
-},{}],6:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 // (c) Copyright 2016, Sean Connelly (@voidqk), http://syntheti.cc
 // MIT License
 // Project Home: https://github.com/voidqk/polybooljs
@@ -1383,7 +1483,7 @@ function Intersecter(selfIntersection, eps, buildLog){
 
 module.exports = Intersecter;
 
-},{"./linked-list":7}],7:[function(require,module,exports){
+},{"./linked-list":8}],8:[function(require,module,exports){
 // (c) Copyright 2016, Sean Connelly (@voidqk), http://syntheti.cc
 // MIT License
 // Project Home: https://github.com/voidqk/polybooljs
@@ -1466,7 +1566,7 @@ var LinkedList = {
 
 module.exports = LinkedList;
 
-},{}],8:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 // (c) Copyright 2016, Sean Connelly (@voidqk), http://syntheti.cc
 // MIT License
 // Project Home: https://github.com/voidqk/polybooljs
@@ -1720,7 +1820,7 @@ function SegmentChainer(segments, eps, buildLog){
 
 module.exports = SegmentChainer;
 
-},{}],9:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 // (c) Copyright 2016, Sean Connelly (@voidqk), http://syntheti.cc
 // MIT License
 // Project Home: https://github.com/voidqk/polybooljs
@@ -1888,7 +1988,7 @@ var SegmentSelector = {
 
 module.exports = SegmentSelector;
 
-},{}],10:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 
 var Util = require('./util');
 
@@ -1969,8 +2069,7 @@ var Simplify = {
 
 module.exports = Simplify;
 
-},{"./util":11}],11:[function(require,module,exports){
-
+},{"./util":12}],12:[function(require,module,exports){
 var Util = {
     normalizeIndex: function (array, index) {
         while (index < 0)
@@ -1985,7 +2084,7 @@ var Util = {
             if (Util.segmentsIntersect(segment, [poly[i], poly[i + 1]]))
                 return true;
         }
-        return false;
+        return Util.segmentsIntersect(segment, [poly[0], poly[poly.length - 1]]);
     },
 
     segmentsIntersect: function(segment1, segment2) {
@@ -1994,6 +2093,20 @@ var Util = {
 
     dot: function(v1x, v1y, v2x, v2y) {
         return v1x * v2x + v1y * v2y;
+    },
+
+    isPointInsidePoly: function(point, poly) {
+        var segment = [point, [point[0] + 10000, point[1]]];
+        var intersections = 0;
+        for (var i = poly.length - 2; i >= 0; --i) {
+            if (Util.segmentsIntersect(segment, [poly[i], poly[i + 1]]))
+                ++intersections;
+        }
+        return (intersections & 1) > 0;
+    },
+
+    isPointOnSegment: function(point, segment) {
+        return orientation(segment[0], segment[1], point) === 0 && inSegment(segment[0], point, segment[1]);
     }
 };
 

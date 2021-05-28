@@ -12,6 +12,7 @@ var SegmentSelector = require('./lib/segment-selector');
 var GeoJSON = require('./lib/geojson');
 var Convex = require('./lib/convex');
 var Simplify = require('./lib/simplify');
+var Debug = require('./lib/debug');
 
 var buildLog = false;
 var epsilon = Epsilon();
@@ -124,6 +125,7 @@ PolyBool = {
 		});
 		if (regions.some(function(r) { return !Convex.isConvex(r); })) {
 			console.log('Non-convex shape created:\nInput:\n' + JSON.stringify(poly) + '\n\nOutput:\n' + JSON.stringify(regions));
+			console.log('Paths: ' + Debug.getRegionCollectionLog(3, [poly.regions, regions]));
 		}
 		return {
 			regions: regions,
